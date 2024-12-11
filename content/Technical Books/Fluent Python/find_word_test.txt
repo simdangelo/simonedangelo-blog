@@ -1,0 +1,5 @@
+hi, I am a sofware developer
+and I am 29 years old
+
+This is a txt file to text my
+script

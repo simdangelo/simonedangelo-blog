@@ -1,0 +1,4 @@
+[INFO myapp 16:21:33] This is an info message
+[WARNING myapp 16:21:33] This is a warning message
+[ERROR myapp 16:21:33] This is an error message
+[CRITICAL myapp 16:21:33] This is a critical message
