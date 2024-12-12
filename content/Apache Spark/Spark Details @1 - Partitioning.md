@@ -1,6 +1,6 @@
 ---
 date: 2024-08-12
-modified: 2024-12-11T22:23:08+01:00
+modified: 2024-12-12T00:10:00+01:00
 ---
 These notes about **Partitioning** will be "notebook-style" and only important and useful operations will be shown in this article (hence, very probably, no such operations will be shown: DataFrame creation, session state creation, etc.). For the complete code, refers to these notebooks I uploaded on a specific repository on [this link](metti!!!).
 # 0. Resources
