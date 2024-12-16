@@ -1,8 +1,8 @@
 ---
 date: 2024-08-12
-modified: 2024-12-12T00:10:00+01:00
+modified: 2024-12-16T22:49:39+01:00
 ---
-These notes about **Partitioning** will be "notebook-style" and only important and useful operations will be shown in this article (hence, very probably, no such operations will be shown: DataFrame creation, session state creation, etc.). For the complete code, refers to these notebooks I uploaded on a specific repository on [this link](metti!!!).
+These notes about **Partitioning** will be "notebook-style" and only important and useful operations will be shown in this article (hence, very probably, no such operations will be shown: DataFrame creation, session state creation, etc.). For the complete code, refers to these notebooks I uploaded on a specific repository on [this link](https://github.com/simdangelo/simonedangelo-blog/tree/v4/content/Apache%20Spark/partitioning_notebooks).
 # 0. Resources
 * [*Data with Nikk the Greek* YouTube Channel](https://www.youtube.com/@DataNikktheGreek)
 # 1. First sneak peak into Spark Partitions
@@ -903,3 +903,564 @@ See also [here](https://medium.com/@zaiderikat/apache-spark-repartitioning-101-f
 - [When to use repartition](https://medium.com/@zaiderikat/apache-spark-repartitioning-101-f2b37e7d8301)
 - [Factors to consider for no. of partitions](https://stackoverflow.com/questions/64600212/how-to-determine-the-partition-size-in-an-apache-spark-dataframe)
 # 4. Spark Partitions in Action
+Here's a quick recap about Partitions. Nothing new in this recap, it's just a way to wrap up all the concepts we have to keep in mind:
+##  4.1. Recap: Why Partitioning Matters
+1. **Good Parallelization:**
+    - Ensure all cores in the cluster are utilized.
+    - Avoid running on a single core when multiple are available.
+2. **Partition Size Considerations:**
+    - **Too Small:** Leads to overhead due to excessive scheduling and coordination.
+    - **Too Large:** Risks out-of-memory (OOM) errors and garbage collection issues.
+    - **Recommended Range:** Between 100 MB to 1 GB per partition, depending on your environment.
+3. **Avoid Distribution Overhead:**
+    - Having too many small partitions can cause performance loss due to scheduling overhead.
+    - A good rule of thumb: Avoid tasks running under 100 milliseconds, as they might indicate an inefficient partitioning strategy.
+
+**Repartitioning vs. Coalescing**:
+- **Repartitioning:**
+    - A shuffle operation that redistributes data uniformly.
+    - Allows **both increasing and decreasing** partitions.
+    - Supports partitioning based on specific columns.
+    - Suitable for scenarios requiring balanced workloads.
+- **Coalescing:**
+    - A narrow transformation that combines partitions **without shuffling**.
+    - **Only decreases** the number of partitions.
+    - Doesn’t rebalance data, so it may cause skewed partitions.
+
+**When to Use Repartitioning and Coalescing**:
+1. **Adjusting Partitions for Cores:**
+    - If the number of partitions isn’t divisible by available cores, adjust accordingly.
+    - Use **Coalesce** to reduce partitions; use **Repartition** to increase them.
+2. **Handling Skewed Data:**
+    - Skew can cause uneven task execution. Use **Repartitioning** for better distribution.
+3. **Join and Shuffle Operations:**
+    - Pre-partitioning on a join key can reduce shuffle overhead.
+    - Operations like `orderBy` and `groupBy` can benefit from repartitioning.
+4. **Filtering Large Datasets:**
+    - After filtering, many partitions might be empty. Repartitioning can optimize follow-up tasks.
+5. **Dealing with Exploding Data Sizes:**
+    - When exploding structured fields or lists, partition sizes can increase unpredictably. Use lower partition sizes to accommodate buffer growth.
+6. **Writing Data Efficiently:**
+    - Partitioning before writing can reduce file fragmentation.
+    - Consider column-based partitioning for faster file access and data querying.
+
+## 4.2. Spark Partitions in actions
+We ran several jobs with different partition configurations to explore how **Coalescing** and **Repartitioning** behave when adjusting partitions.
+### 4.2.1. Scenario1: Reducing from 30 to 12 Partitions
+We tested four approaches:
+* **Baseline** with 12 Partitions
+* **Baseline** with 13 Partitions
+- **Coalesce:** Reduced partitions from 30 to 12
+- **Repartition:** Reduced partitions from 30 to 12
+```python
+sdf = sdf_generator(num_rows, 12)
+print(sdf.rdd.getNumPartitions())
+sc.setJobDescription("Base line 12")
+sdf.write.format("noop").mode("overwrite").save()
+sc.setJobDescription("None")
+
+sdf = sdf_generator(num_rows, 13)
+print(sdf.rdd.getNumPartitions())
+sc.setJobDescription("Base line 13")
+sdf.write.format("noop").mode("overwrite").save()
+sc.setJobDescription("None")
+
+sdf = sdf_generator(num_rows, 13).coalesce(12)
+print(sdf.rdd.getNumPartitions())
+sc.setJobDescription("Coalesce 13 to 12")
+sdf.write.format("noop").mode("overwrite").save()
+sc.setJobDescription("None")
+
+sdf = sdf_generator(num_rows, 13).repartition(12)
+print(sdf.rdd.getNumPartitions())
+sc.setJobDescription("Repartition 13 to 12")
+sdf.write.format("noop").mode("overwrite").save()
+sc.setJobDescription("None")
+```
+
+**Baseline Execution (12 and 13 Partitions)**:
+- The **12-partition baseline** showed a well-distributed dataset with evenly balanced tasks and execution times.
+	![[Apache Spark/attachments/Pasted image 20241213223545.png]]
+- The **13-partition baseline**, however, revealed a notable issue: since our Spark cluster has **4 cores**, one partition couldn't be processed in parallel, leaving one core underutilized. This caused a **resource imbalance**, reducing efficiency.
+	![[Apache Spark/attachments/Pasted image 20241213224117.png]]
+
+**Coalescing (30 to 12 Partitions)**:
+- The process was **slightly slower** than the baseline with 12 partitions, taking about **2 seconds longer**.
+- The underlying issue: **data skew**. Spark simply merged smaller partitions without redistributing data, resulting in uneven partition sizes.
+- This approach **minimized shuffling**, keeping execution relatively efficient but failing to balance workloads effectively.
+	![[Apache Spark/attachments/Pasted image 20241213224332.png]]
+
+**Repartitioning (30 to 12 Partitions)**
+- Repartitioning required a **shuffling phase**, increasing the overall **execution time** due to data serialization (in total this job is composed of 2 stages).
+- This caused **spill events**, meaning Spark had to temporarily save data to disk, significantly slowing down the process.
+- **Final Result:** Despite the initial overhead, the dataset ended up **uniformly partitioned**, closely matching the performance of a pre-distributed dataset.
+	![[Apache Spark/attachments/Pasted image 20241213224512.png]]
+
+### 4.2.2. Scenario2: Reducing from 20001 to 12 Partitions
+We tested three approaches:
+* **Baseline** with 20001 Partitions
+- **Coalesce:** Reduced partitions from 20001 to 12
+- **Repartition:** Reduced partitions from 20001 to 12
+```python
+sdf = sdf_generator(num_rows, 20001)
+print(sdf.rdd.getNumPartitions())
+sc.setJobDescription("Base line 20001")
+sdf.write.format("noop").mode("overwrite").save()
+sc.setJobDescription("None")
+
+sdf = sdf_generator(num_rows, 20001).coalesce(12)
+print(sdf.rdd.getNumPartitions())
+sc.setJobDescription("Coalesce 20001 to 12")
+sdf.write.format("noop").mode("overwrite").save()
+sc.setJobDescription("None")
+
+sdf = sdf_generator(num_rows, 20001).repartition(12)
+print(sdf.rdd.getNumPartitions())
+sc.setJobDescription("Repartition 20001 to 12")
+sdf.write.format("noop").mode("overwrite").save()
+sc.setJobDescription("None")
+```
+
+**Baseline Execution (20001 Partitions)**:
++ It took 23 seconds and it's characterised by and excessive scheduling overhead caused by too many small partitions.
+	![](Apache%20Spark/attachments/Pasted%20image%2020241214130853.png)
+**Coalescing (20001 to 12 Partitions)**:
+- Surprisingly effective (actually no "surprisingly" at all because with only 12 partitions there no excessive scheduling overhead, so it took only 12 seconds, about 10 seconds less than the baseline).
+- Resulted in near-uniform data distribution across partitions because rows per partition varied slightly, which is acceptable (min. 16659167 and max. 16669167).
+- Execution time improved significantly compared to the original dataset with 20,001 partitions.
+- This demonstrates an ideal scenario where `coalesce` works well, reducing the dataset without shuffling.
+	![](Apache%20Spark/attachments/Pasted%20image%2020241214140553.png)
+**Repartitioning (20001 to 12 Partitions)**
+- Performed worse than expected.
+- Shuffling caused additional overhead.
+- No memory spill occurred due to the larger partition size, but task execution still took longer (*TODO: i don't understand this point*).
+- Despite even data re-distribution after shuffling, the initial small tasks from 20,001 partitions caused extra serialization and processing costs.
+- Even if we look only at the second stage, `repartition` works worst than `coalesce` (12s vs 38s).
+	![](Apache%20Spark/attachments/Pasted%20image%2020241214141010.png)
+	![](Apache%20Spark/attachments/Pasted%20image%2020241214141025.png)
+	![](Apache%20Spark/attachments/Pasted%20image%2020241214141039.png)
+
+### 4.2.3. Scenario3: Reducing from 90 to 40 Partitions
+We tested four approaches:
+* **Baseline** with 40 Partitions
+* **Baseline** with 90 Partitions
+- **Coalesce:** Reduced partitions from 90 to 40
+- **Repartition:** Reduced partitions from 90 to 40
+```python
+sdf = sdf_generator(num_rows, 40)
+print(sdf.rdd.getNumPartitions())
+sc.setJobDescription("Base line 40")
+sdf.write.format("noop").mode("overwrite").save()
+sc.setJobDescription("None")
+
+sdf = sdf_generator(num_rows, 90)
+print(sdf.rdd.getNumPartitions())
+sc.setJobDescription("Base line 90")
+sdf.write.format("noop").mode("overwrite").save()
+sc.setJobDescription("None")
+
+sdf = sdf_generator(num_rows, 90).coalesce(40)
+print(sdf.rdd.getNumPartitions())
+sc.setJobDescription("Coalesce 90 to 40")
+sdf.write.format("noop").mode("overwrite").save()
+sc.setJobDescription("None")
+
+sdf = sdf_generator(num_rows, 90).repartition(40)
+print(sdf.rdd.getNumPartitions())
+sc.setJobDescription("Repartition 90 to 40")
+sdf.write.format("noop").mode("overwrite").save()
+sc.setJobDescription("None")
+```
+
+**Baseline Execution (40 Partitions)**:
+- Data is evenly distributed.
+- Slight variations in task durations due to minor scheduling differences.
+- Overall execution is efficient and balanced.
+	![](Apache%20Spark/attachments/Pasted%20image%2020241214142404.png)
+
+**Baseline Execution (90 Partitions)**:
+- Uniform distribution of data.
+- Tasks are smaller and shorter, but the total execution time remains close to the 40-partition baseline.
+	![](Apache%20Spark/attachments/Pasted%20image%2020241214142443.png)
+
+**Coalescing (90 to 40 Partitions)**:
+- Resulted in some skewed partitions:
+    - Average partition size: ~4444444 million rows.
+    - Largest partition: 6666667 million rows.
+- One task took longer (1 second vs 0.8 seconds for the median and 0.7 seconds for the min) and kept one core busy at the end, indicating skew but still acceptable overall.
+	![](Apache%20Spark/attachments/Pasted%20image%2020241214142720.png)
+
+**Repartitioning (90 to 40 Partitions)**:
+- High overhead due to shuffling during repartitioning.
+- After shuffling, execution was fast and evenly distributed.
+- The initial shuffling operation was costly, making repartitioning inefficient in this scenario.
+	![](Apache%20Spark/attachments/Pasted%20image%2020241214142757.png)
+	![](Apache%20Spark/attachments/Pasted%20image%2020241214142813.png)
+	![](Apache%20Spark/attachments/Pasted%20image%2020241214142835.png)
+
+### 4.2.4. Scenario4: Increasing Partitions
+We tested five approaches:
+* **Baseline** with 1 Partitions
+* **Baseline** with 10 Partitions
+* **Baseline** with 12 Partitions
+- **Repartition:** Reduced partitions from 1 to 12
+- **Repartition:** Reduced partitions from 10 to 12
+```python
+sdf = sdf_generator(num_rows, 1)
+print(sdf.rdd.getNumPartitions())
+sc.setJobDescription("Base line 1")
+sdf.write.format("noop").mode("overwrite").save()
+sc.setJobDescription("None")
+
+sdf = sdf_generator(num_rows, 10)
+print(sdf.rdd.getNumPartitions())
+sc.setJobDescription("Base line 10")
+sdf.write.format("noop").mode("overwrite").save()
+sc.setJobDescription("None")
+
+sdf = sdf_generator(num_rows, 12)
+print(sdf.rdd.getNumPartitions())
+sc.setJobDescription("Base line 12")
+sdf.write.format("noop").mode("overwrite").save()
+sc.setJobDescription("None")
+
+sdf = sdf_generator(num_rows, 1).repartition(12)
+print(sdf.rdd.getNumPartitions())
+sc.setJobDescription("Repartition 1 to 12")
+sdf.write.format("noop").mode("overwrite").save()
+sc.setJobDescription("None")
+
+sdf = sdf_generator(num_rows, 10).repartition(12)
+print(sdf.rdd.getNumPartitions())
+sc.setJobDescription("Repartition 10 to 12")
+sdf.write.format("noop").mode("overwrite").save()
+sc.setJobDescription("None")
+```
+
+**Baseline Execution (1 Partition)**:
+- Execution runs entirely on **one core**, causing significant delays.
+- The process is inefficient due to the lack of parallelism.
+	![](Apache%20Spark/attachments/Screenshot%202024-12-14%20at%2023.19.17.png)
+
+**Baseline Execution (10 Partitions)**:
+- Two tasks run independently on two cores, leaving the other two cores **idle**.
+- Parallelism improves slightly but remains suboptimal.
+	![](Apache%20Spark/attachments/Pasted%20image%2020241214231951.png)
+
+**Baseline Execution (12 Partitions)**:
+1. The process runs **perfectly parallel**, fully utilizing all cores.
+	![](Apache%20Spark/attachments/Pasted%20image%2020241214232015.png)
+
+**Repartitioning (1 to 12 Partitions)**:
+- This process involves a **heavy shuffle operation** due to the significant increase in partitions.
+- We observe **spills** during the serialization phase, making the shuffling process even more complicated.
+	![](Apache%20Spark/attachments/Pasted%20image%2020241214232051.png)
+	![](Apache%20Spark/attachments/Screenshot%202024-12-14%20at%2023.42.15.png)
+	![](Apache%20Spark/attachments/Pasted%20image%2020241214234242.png)
+
+**Repartitioning (10 to 12 Partitions)**:
+- Though the initial distribution is better, some **shuffle writes and spills** still occur.
+- The resulting execution is efficient after repartitioning, achieving a **well-distributed dataset** with balanced durations.
+	![](Apache%20Spark/attachments/Pasted%20image%2020241214234347.png)
+	![](Apache%20Spark/attachments/Pasted%20image%2020241214234423.png)![](Apache%20Spark/attachments/Pasted%20image%2020241214234436.png)
+
+### 4.2.5. Scenario5: Skewed Dataset
+We tested x approaches:
+* Baseline of **Skewed Dataset** with 12 partitions
+- **Coalesce:** Reduced a **Skewed Dataset** from 12 to 8
+- **Repartition:** Repartitioned a **Skewed Dataset** from 12 to 12
+- **Repartition:** Repartitioned a **Skewed Dataset** from 12 to 8
+```python
+sdf = sdf_generator(num_rows, 15)
+sdf = sdf.coalesce(12)
+print(sdf.rdd.getNumPartitions())
+sc.setJobDescription("Base line skewed 12")
+sdf.write.format("noop").mode("overwrite").save()
+sc.setJobDescription("None")
+
+sdf = sdf_generator(num_rows, 15)
+sdf = sdf.coalesce(12)
+sdf = sdf.coalesce(8)
+print(sdf.rdd.getNumPartitions())
+sc.setJobDescription("Coalesce for Skew 8")
+sdf.write.format("noop").mode("overwrite").save()
+sc.setJobDescription("None")
+
+sdf = sdf_generator(num_rows, 15)
+sdf = sdf.coalesce(12)
+sdf = sdf.repartition(12)
+print(sdf.rdd.getNumPartitions())
+sc.setJobDescription("Repartition for Skew 12")
+sdf.write.format("noop").mode("overwrite").save()
+sc.setJobDescription("None")
+
+sdf = sdf_generator(num_rows, 15)
+sdf = sdf.coalesce(12)
+sdf = sdf.repartition(8)
+print(sdf.rdd.getNumPartitions())
+sc.setJobDescription("Repartition for Skew 8")
+sdf.write.format("noop").mode("overwrite").save()
+sc.setJobDescription("None")
+```
+
+**Baseline of Skewed Dataset with 12 partitions**
+- Three tasks occupy most of the cores.
+- Depending on the specific moment in the timeline, some cores remain **unused**, indicating clear data skew.
+- Some partitions are significantly **larger**, causing uneven task durations.
+	![](Apache%20Spark/attachments/Pasted%20image%2020241215151108.png)
+
+**Coalesce: Reduced a Skewed Dataset from 12 to 8**
+* Slightly improved but still skewed.
+- While we use fewer partitions, the tasks remain **unevenly distributed**.
+	![](Apache%20Spark/attachments/Pasted%20image%2020241215151144.png)
+
+**Repartition: Repartitioned a Skewed Dataset from 12 to 12**
+- Partitions are **evenly distributed** across tasks.
+- There is some **spill** due to the shuffle operation, causing minor delays.
+	![](Apache%20Spark/attachments/Pasted%20image%2020241215152416.png)
+	![](Apache%20Spark/attachments/Pasted%20image%2020241215152431.png)
+	![](Apache%20Spark/attachments/Pasted%20image%2020241215152444.png)
+
+**Repartition: Repartitioned a Skewed Dataset from 12 to 8**
+* Comparable to the repartition-to-12 case.
+- **Task Distribution:**
+	- **Well-balanced** partitions.
+	- Uniform execution times across all tasks.
+	![](Apache%20Spark/attachments/Pasted%20image%2020241215152539.png)
+	![](Apache%20Spark/attachments/Pasted%20image%2020241215152551.png)
+	![](Apache%20Spark/attachments/Pasted%20image%2020241215152603.png)
+#### Query Optimizer Insight:
+Upon inspecting Spark’s **physical plan**, we noticed:
+- **Coalesce Optimization:**
+    - In the "*Coalesce for Skew 8*" job, when coalescing from 15 to 12 and then to 8, Spark **ignored the intermediate step**, applying only **one coalesce** to 8.
+    - The second coalesce was **skipped entirely**, as the optimizer combined both operations into one.
+	![](Apache%20Spark/attachments/Pasted%20image%2020241215153758.png)
+- **Repartition Optimization:**
+    - Similarly in the last two jobs, when attempting coalesce followed by a repartition, Spark directly applied **round-robin partitioning**, skipping the coalesce.
+	![](Apache%20Spark/attachments/Pasted%20image%2020241215153821.png)
+
+### 4.2.6. Scenario6: Filter operations become more efficient
+34.13 to finish!
+# 5. Spark Partitions when Saving Files
+Let's explore how **data partitioning** affects saving data in Spark using **Parquet** files. We'll examine how the number of partitions influences the number of files created when saving a dataset.
+## 5.1. How many files are written based on the number of partitions
+We run three different tests with varying partition counts:
+```python
+base_dir = "base_dir/"
+
+sdf = sdf_generator(num_rows, 1)
+print(sdf.rdd.getNumPartitions())
+sc.setJobDescription("Write 1 file")
+sdf.write.format("parquet").mode("overwrite").save(f"{base_dir}/test_1_file.parquet")
+sc.setJobDescription("None")
+
+sdf = sdf_generator(num_rows, 4)
+print(sdf.rdd.getNumPartitions())
+sc.setJobDescription("Write 4 file")
+sdf.write.format("parquet").mode("overwrite").save(f"{base_dir}/test_4_file.parquet")
+sc.setJobDescription("None")
+
+sdf = sdf_generator(num_rows, 12)
+print(sdf.rdd.getNumPartitions())
+sc.setJobDescription("Write 12 file")
+sdf.write.format("parquet").mode("overwrite").save(f"{base_dir}/test_12_file.parquet")
+sc.setJobDescription("None")
+```
+
+Results:
+1. **One Partition:**
+    - Save the dataset with **one partition**.
+    - Result: **One Parquet file** generated.
+    - File Size: ~8MB.
+    - Insights: The dataset is saved into a **single Snappy Parquet file**, while additional metadata files may be generated for schema and stats.
+    - **Task Count:** 1 task processed. Since only **one task** was assigned, there’s **no parallelism**, resulting in a straightforward, single write operation.
+	![](Apache%20Spark/attachments/Pasted%20image%2020241215164542.png)
+1. **Four Partitions:**
+    - Save the dataset with **four partitions**.
+    - Result: **Four Parquet files** created.
+    - Output Size per File: ~2MB (split evenly).
+    - Insights: Each partition is saved into its **own file**, allowing better parallelism and write efficiency.
+    - **Task Count:** 4 tasks processed. Each task handled **one partition**, enabling **parallel writing**.
+	![](Apache%20Spark/attachments/Pasted%20image%2020241215164618.png)
+1. **Twelve Partitions:**
+    - Save the dataset with **twelve partitions**.
+    - Result: **Twelve Parquet files** created.
+    - Insights: Every partition gets its **own file**, improving **parallel writes**. Each file is processed independently, avoiding write bottlenecks.
+    - Output Size per File: ~700KB (split evenly).
+    - **Task Count:** 12 tasks processed. Tasks **parallelized efficiently**, though with minimal data, task management overhead could slightly affected performance.
+	![](Apache%20Spark/attachments/Pasted%20image%2020241215164826.png)
+
+Here's the visual results:
+![](Apache%20Spark/attachments/Pasted%20image%2020241215162905.png)
+### Key Takeaways:
+- **File Creation Logic:** The number of **Parquet files** created **matches the number of partitions** in Spark.
+- **Parallelism:** Spark writes each partition **independently**, ensuring maximum efficiency.
+- **Metadata Files:** Additional metadata files might be created, likely containing schema details and file statistics, though their exact content depends on the Parquet specification.
+### Key Takeaways from the Spark UI
+- **No Shuffling:** Since data saving involves no complex transformations, Spark skips shuffling, resulting in a **single stage job**.
+- **Task Distribution:** The number of **tasks equals the number of partitions**, ensuring **maximum parallelism**.
+- **Data Size Stats:** The *Spark/DataFrame* tab shows detailed **output file sizes**, **row counts**, and **files created**, confirming that **one file per partition** is created.
+## 5.2. Using coalesce and Repartition to save data
+Let's dive into how **Coalescing** and **Repartitioning** affect file writes in Spark, particularly when reducing partitions to generate fewer, larger output files.
+
+We ran tests where data was saved with:
+- **Coalescing to 4 Partitions**
+- **Coalescing to 1 Partition**
+- **Repartitioning to 4 Partitions**
+- **Repartitioning to 1 Partition**
+```python
+sdf = sdf_generator(num_rows, 12)
+sdf = sdf.coalesce(4)
+print(sdf.rdd.getNumPartitions())
+sc.setJobDescription("Write with Coalesce 12 to 4 file")
+sdf.write.format("parquet").mode("overwrite").save(f"{base_dir}/test_12_to_4_coalesce_file.parquet")
+sc.setJobDescription("None")
+
+sdf = sdf_generator(num_rows, 12)
+sdf = sdf.coalesce(1)
+print(sdf.rdd.getNumPartitions())
+sc.setJobDescription("Write with Coalesce 12 to 1 file")
+sdf.write.format("parquet").mode("overwrite").save(f"{base_dir}/test_12_to_1_coalesce_file.parquet")
+sc.setJobDescription("None")
+
+sdf = sdf_generator(num_rows, 12)
+sdf = sdf.repartition(4)
+print(sdf.rdd.getNumPartitions())
+sc.setJobDescription("Write with Repartition 12 to 4 file")
+sdf.write.format("parquet").mode("overwrite").save(f"{base_dir}/test_12_to_4_repartition_file.parquet")
+sc.setJobDescription("None")
+
+sdf = sdf_generator(num_rows, 12)
+sdf = sdf.repartition(1)
+print(sdf.rdd.getNumPartitions())
+sc.setJobDescription("Write with Repartition 12 to 1 file")
+sdf.write.format("parquet").mode("overwrite").save(f"{base_dir}/test_12_to_1_repartition_file.parquet")
+sc.setJobDescription("None")
+```
+
+**Coalescing to 4 Partitions:**
+- **Execution Time:** (Potentially) Faster than coalescing to 1 due to **better core utilization**.
+- **Task Utilization:** **Four cores** used evenly, ensuring **balanced processing**.
+- **File Output:** **Four files** generated, each about 2MB.
+- **Takeaway:** Coalescing is efficient when the target partition count is reasonable and divisible by the core count.
+
+**Coalescing to 1 Partition:**
+- **Execution Time:** (Potentially) Slower than coalescing to 4 due to **worse core utilization**.
+- **Task Utilization:** Only **one core** is used, leading to slower performance.
+- **File Output:** A **single file** of ~8MB generated.
+- **Takeaway:** Since **no shuffling** occurs, only one task processes all data, causing slower write performance.
+
+**Repartitioning to 4 Partitions:**
+- **Execution Time:** Slightly slower than coalescing due to **shuffle overhead**.
+- **Task Utilization:** Fully distributed during the **shuffle stage** and **file writing**.
+- **File Output:** **Four files**, each about 2MB.
+- **Takeaway:** Repartitioning leverages **parallel processing** but incurs **shuffle costs**, making it more suitable for balancing uneven data.
+
+**Repartitioning to 1 Partition:**
+- **Execution Time:** Slightly longer due to **shuffle overhead**.
+- **Task Utilization:** Initially uses **all available cores** before **final merging** into one partition.
+- **File Output:** A **single file** of ~8MB.
+- **Takeaway:** Even though there's **shuffle overhead**, **parallelism** during initial processing improves performance compared to coalescing.
+## 5.3. Empty partitions problem when writing
+Let's revisit the issue of **empty partitions** when saving data. In a previous session, we discussed how filtering data could result in **empty partitions**, raising concerns about **zero-byte files** being written. This could lead to **unnecessary overhead** in the system, causing file management issues.
+
+To test this, we created a data set with **20 partitions**, containing **1 million rows**. After applying a **filter**, only **200 rows** remained, all located in a **single partition**. The question was: Would Spark still write **19 empty files**?
+```python
+sdf = sdf_generator(num_rows, 20)
+sdf = sdf.filter(f.col("id") < 200)
+print(sdf.rdd.getNumPartitions())
+sc.setJobDescription("Empty rows")
+sdf.write.format("parquet").mode("overwrite").save(f"{base_dir}/emptyRows.parquet")
+sc.setJobDescription("None")
+```
+
+If we see the storage account, we are pleased to see that Spark only wrote **one file**:
+![](Apache%20Spark/attachments/Pasted%20image%2020241215175054.png)
+
+This means that Spark is **smart enough** to avoid writing empty files when saving data. While I’ve occasionally encountered cases where **zero-byte files** were written, this behavior seems **rare** and likely depends on **specific configurations**.
+
+Looking at the **Spark UI**, we noticed that the job ran **significantly faster** compared to the previous save experiments, due to the filtering, given that only **one partition** needed to be saved:
+![[Screenshot 2024-12-16 at 22.20.07.png]]
+
+If we go into the details, we'll see that the partition containing the **200 rows** was the only one processed, and its corresponding task (the first one at the top in the following image) took the most time:
+![[Pasted image 20241216222327.png]]
+
+In the **SQL query details**, we confirmed:
+- **Initial Rows:** 1 million
+- **Filtered Rows:** 200
+- **File Size:** 3.4KB
+- **Number of Files:** 1 file created, as expected.
+![[Pasted image 20241216222610.png]]
+
+While there was some **deserialization time** observed, likely due to **partition scanning** during the save operation, this was a minor detail compared to the overall performance improvement. This experiment highlights how Spark **efficiently skips empty partitions**, ensuring optimized storage and reducing **system overhead**.
+## 5.4. Repartitioning by column idfirst
+When **repartitioning by a column**, you might encounter **empty partitions** due to **hash partitioning**. This happens when Spark assigns rows to partitions based on the **hash modulo value** of the partitioning column. If multiple rows resolve to the same hash value, they end up in the **same partition**, potentially leaving others **empty**.
+
+To see this in action, we started with **20 partitions** and **repartitioned down to 10** using the `idfirst` column:
+```python
+sdf = sdf_generator(num_rows, 20)
+sdf = sdf.repartition(10, "idfirst")
+print(sdf.rdd.getNumPartitions())
+sc.setJobDescription("repartition 10 idfirst")
+sdf.write.format("parquet").mode("overwrite").save(f"{base_dir}/repartition_10_idfirst.parquet")
+sc.setJobDescription("None")
+```
+
+When inspecting the results, only **six partitions** contained data:
+```terminal
+>>> rows_per_partition(sdf)
++------------+------+----------+
+|partition_id| count|count_perc|
++------------+------+----------+
+|           3|111111|   11.1111|
+|           4|111111|   11.1111|
+|           5|111112|   11.1112|
+|           6|222222|   22.2222|
+|           8|111111|   11.1111|
+|           9|333333|   33.3333|
++------------+------+----------+
+```
+
+Upon checking the **Parquet files**, we found **six valid files** with data and **one empty file** of **less than 1KB size**:
+![[Pasted image 20241216223735.png]]
+
+To verify, we loaded the **1KB Parquet file** using Spark's `read.parquet()` method and ran `.show()`.
+```terminal
+>>> spark.read.parquet(f"{base_dir}/repartition_10_idfirst.parquet/part-00000-c36f2adc-e01d-4f64-84b3-8f06fcfcee4c-c000.snappy.parquet").show()
++---+----+---------+--------+-------+------+
+| id|date|timestamp|idstring|idfirst|idlast|
++---+----+---------+--------+-------+------+
++---+----+---------+--------+-------+------+
+```
+
+As expected, the file was **empty**, confirming that Spark wrote a file even when no data existed in that partition.
+
+We tried the same experiment, this time repartitioning down to **eight partitions**:
+```python
+sdf = sdf_generator(num_rows, 20)
+sdf = sdf.repartition(8, "idfirst")
+print(sdf.rdd.getNumPartitions())
+sc.setJobDescription("repartition 8 idfirst")
+sdf.write.format("parquet").mode("overwrite").save(f"{base_dir}/repartition_8_idfirst.parquet")
+sc.setJobDescription("None")
+```
+
+Partitions' details:
+```terminal
+>>> rows_per_partition(sdf)
++------------+------+----------+
+|partition_id| count|count_perc|
++------------+------+----------+
+|           0|111111|   11.1111|
+|           1|111111|   11.1111|
+|           2|222222|   22.2222|
+|           3|333334|   33.3334|
+|           5|111111|   11.1111|
+|           6|111111|   11.1111|
++------------+------+----------+
+```
+
+Interestingly, in this run, there were no empty files—Spark only saved files where data existed:
+![[Pasted image 20241216224541.png]]
+
+This experiment highlighted how **hash partitioning** can cause **imbalances** when repartitioning by a column, potentially leaving some partitions **empty**.
