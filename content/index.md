@@ -1,7 +1,7 @@
 ---
 title: Welcome to My Garden
 date: 2024-06-09
-modified: 2024-11-28T23:10:29+01:00
+modified: 2024-12-17T18:37:02+01:00
 ---
 
 I'm Simone, an **aspiring Software Engineer**. This website is my personal space, where I'll be documenting my journey in the field of software engineering. 
@@ -19,7 +19,7 @@ I have organized the content of this Garden into various topics and sections for
 * [Blog](Blog/index.md): I post everything that isn't technical learning notes.
 * [Data Engineering](Data%20Engineering/index.md): there will be playlists or single-article notes about data Engineering. Playlists:
 	* [Data Engineering Bootcamp (by Zach Morris Wilson)](Data%20Engineering/Data%20Engineering%20Bootcamp%20(by%20Zach%20Morris%20Wilson)/index.md): # 6-week Data Engineering BootCamp [freely available on YouTube](https://www.youtube.com/watch?v=myhe0LXpCeo&list=PLwUdL9DpGWU0lhwp3WCxRsb1385KFTLYE&ab_channel=DatawithZach) by Zach Wilson. I'm following this bootcamp right now and it looks so interesting. There are both theoretical and practical lessons. As far as I know, Zach has worked in some FANGs for many years and gained a lot of experience, so maybe he can give us tips that are hard to find elsewhere.
-* [Database System](Database%20System/index.md): this is a fantastic course ([available freely on YouTube](https://www.youtube.com/watch?v=vdPALZ-GCfI&list=PLSE8ODhjZXjbj8BMuIrRcacnQh20hmY9g&index=1)) taken by Andy Pavlo from Carnegie Mellon University. It's a very long course, so along the time I'm trying to follow all the lessons and post here my notes. It's not a "practical course", in the sense that I'm not learning how to code or some specific tools, but it's giving me a great consciousness about Databases, that is a tool we constantly use all the time as software engineers. If you want to know what's happen under the hood when you use a database, I really suggest this course. Since I'm trying to get notes at best, I'm only at the 5th lesson at the time I'm writing.
+* [Database System (by Andy Pavlo)](Database%20System%20(by%20Andy%20Pavlo)/index.md): this is a fantastic course ([available freely on YouTube](https://www.youtube.com/watch?v=vdPALZ-GCfI&list=PLSE8ODhjZXjbj8BMuIrRcacnQh20hmY9g&index=1)) taken by Andy Pavlo from Carnegie Mellon University. It's a very long course, so along the time I'm trying to follow all the lessons and post here my notes. It's not a "practical course", in the sense that I'm not learning how to code or some specific tools, but it's giving me a great consciousness about Databases, that is a tool we constantly use all the time as software engineers. If you want to know what's happen under the hood when you use a database, I really suggest this course. Since I'm trying to get notes at best, I'm only at the 5th lesson at the time I'm writing.
 * [Other](Other/index.md): this section contains scattered notes I have about Docker, Git, and other topics I study in the future.
 * [Periodical Retrospective](Periodical%20Retrospective/index.md): I will regularly post recaps every 2-3 months, reflecting on my professional life, highlighting what went well, and identifying areas for improvement.
 * [Python](Python/index.md): I will fill this section with notes on Python topics that I find interesting or useful to know about. It includes:
