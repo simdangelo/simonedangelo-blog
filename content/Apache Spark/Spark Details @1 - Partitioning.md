@@ -1,10 +1,11 @@
 ---
 date: 2024-08-12
-modified: 2024-12-16T22:49:39+01:00
+modified: 2024-12-28T14:23:52+01:00
 ---
 These notes about **Partitioning** will be "notebook-style" and only important and useful operations will be shown in this article (hence, very probably, no such operations will be shown: DataFrame creation, session state creation, etc.). For the complete code, refers to these notebooks I uploaded on a specific repository on [this link](https://github.com/simdangelo/simonedangelo-blog/tree/v4/content/Apache%20Spark/partitioning_notebooks).
 # 0. Resources
 * [*Data with Nikk the Greek* YouTube Channel](https://www.youtube.com/@DataNikktheGreek)
+* [How are the initial number of partitions are determined in PySpark?](https://www.linkedin.com/pulse/how-initial-number-partitions-determined-pyspark-sugumar-srinivasan/) by Sugumar Srinivasan
 # 1. First sneak peak into Spark Partitions
  General hints:
  * `df.rdd.getNumPartitions()` returns the number of partitions of the current Spark DataFrame;
@@ -980,21 +981,21 @@ sc.setJobDescription("None")
 
 **Baseline Execution (12 and 13 Partitions)**:
 - The **12-partition baseline** showed a well-distributed dataset with evenly balanced tasks and execution times.
-	![[Apache Spark/attachments/Pasted image 20241213223545.png]]
+	![Pasted image 20241213223545](Apache%20Spark/attachments/Pasted%20image%2020241213223545.png)
 - The **13-partition baseline**, however, revealed a notable issue: since our Spark cluster has **4 cores**, one partition couldn't be processed in parallel, leaving one core underutilized. This caused a **resource imbalance**, reducing efficiency.
-	![[Apache Spark/attachments/Pasted image 20241213224117.png]]
+	![Pasted image 20241213224117](Apache%20Spark/attachments/Pasted%20image%2020241213224117.png)
 
 **Coalescing (30 to 12 Partitions)**:
 - The process was **slightly slower** than the baseline with 12 partitions, taking about **2 seconds longer**.
 - The underlying issue: **data skew**. Spark simply merged smaller partitions without redistributing data, resulting in uneven partition sizes.
 - This approach **minimized shuffling**, keeping execution relatively efficient but failing to balance workloads effectively.
-	![[Apache Spark/attachments/Pasted image 20241213224332.png]]
+	![Pasted image 20241213224332](Apache%20Spark/attachments/Pasted%20image%2020241213224332.png)
 
 **Repartitioning (30 to 12 Partitions)**
 - Repartitioning required a **shuffling phase**, increasing the overall **execution time** due to data serialization (in total this job is composed of 2 stages).
 - This caused **spill events**, meaning Spark had to temporarily save data to disk, significantly slowing down the process.
 - **Final Result:** Despite the initial overhead, the dataset ended up **uniformly partitioned**, closely matching the performance of a pre-distributed dataset.
-	![[Apache Spark/attachments/Pasted image 20241213224512.png]]
+	![Pasted image 20241213224512](Apache%20Spark/attachments/Pasted%20image%2020241213224512.png)
 
 ### 4.2.2. Scenario2: Reducing from 20001 to 12 Partitions
 We tested three approaches:
@@ -1380,17 +1381,17 @@ If we see the storage account, we are pleased to see that Spark only wrote **one
 This means that Spark is **smart enough** to avoid writing empty files when saving data. While I’ve occasionally encountered cases where **zero-byte files** were written, this behavior seems **rare** and likely depends on **specific configurations**.
 
 Looking at the **Spark UI**, we noticed that the job ran **significantly faster** compared to the previous save experiments, due to the filtering, given that only **one partition** needed to be saved:
-![[Screenshot 2024-12-16 at 22.20.07.png]]
+![Screenshot 2024-12-16 at 22.20.07](Apache%20Spark/attachments/Screenshot%202024-12-16%20at%2022.20.07.png)
 
 If we go into the details, we'll see that the partition containing the **200 rows** was the only one processed, and its corresponding task (the first one at the top in the following image) took the most time:
-![[Pasted image 20241216222327.png]]
+![Pasted image 20241216222327](Apache%20Spark/attachments/Pasted%20image%2020241216222327.png)
 
 In the **SQL query details**, we confirmed:
 - **Initial Rows:** 1 million
 - **Filtered Rows:** 200
 - **File Size:** 3.4KB
 - **Number of Files:** 1 file created, as expected.
-![[Pasted image 20241216222610.png]]
+![Pasted image 20241216222610](Apache%20Spark/attachments/Pasted%20image%2020241216222610.png)
 
 While there was some **deserialization time** observed, likely due to **partition scanning** during the save operation, this was a minor detail compared to the overall performance improvement. This experiment highlights how Spark **efficiently skips empty partitions**, ensuring optimized storage and reducing **system overhead**.
 ## 5.4. Repartitioning by column idfirst
@@ -1422,7 +1423,7 @@ When inspecting the results, only **six partitions** contained data:
 ```
 
 Upon checking the **Parquet files**, we found **six valid files** with data and **one empty file** of **less than 1KB size**:
-![[Pasted image 20241216223735.png]]
+![Pasted image 20241216223735](Apache%20Spark/attachments/Pasted%20image%2020241216223735.png)
 
 To verify, we loaded the **1KB Parquet file** using Spark's `read.parquet()` method and ran `.show()`.
 ```terminal
@@ -1461,6 +1462,336 @@ Partitions' details:
 ```
 
 Interestingly, in this run, there were no empty files—Spark only saved files where data existed:
-![[Pasted image 20241216224541.png]]
+![Pasted image 20241216224541](Apache%20Spark/attachments/Pasted%20image%2020241216224541.png)
 
 This experiment highlighted how **hash partitioning** can cause **imbalances** when repartitioning by a column, potentially leaving some partitions **empty**.
+# 6. Spark Partitions when Loading Files
+We’ll explore how **data loading with Parquet files in Spark** works, focusing on **partitions** and **data distribution** during loading. After diving deep into this topic recently, I realized it’s **highly complex** with many influencing factors. 
+
+Understanding how **Spark generates partitions** while loading data helps us:
+- **Optimize Data Processing:** A good grasp of partitioning can **reduce the need for expensive operations** like **repartitioning** or **coalescing**, which introduce extra overhead.
+- **Enhance Performance:** Properly configuring data partitions from the start makes the **entire process more efficient**.
+- **Avoid Empty Partitions:** These **waste resources** and **slow down execution**, as we saw in earlier sessions.
+
+To assist with this, I added a useful Spark package from **Biosoft** that helps **analyze data distributions** and the **file system** more easily. This tool prevents us from jumping back and forth into the Spark UI by providing details like **data sizes** and **row counts per partition**.
+## 6.1. Setup
+Let's list the functions we're going to use for this analysis:
+1. **Data Writer Generator:**
+    - This function generates uniformly distributed Parquet files based on **row count** and **number of files (partitions)**.
+    - Example: If we set **rows = 2000** and **files = 4**, it will create **4 Parquet files** with **500 rows each**.
+2. **Configuration Setter:** We predefine Spark configurations with **default values**. We’ll discuss these settings in detail later.
+3. **Parquet Analysis Tool:** Using the **Parquet Partitions Function** from the added module, we can:
+	- **Calculate partition stats:** Including **bytes per file**, **number of files**, and **rows per partition**.
+	- **View Distribution Tables:** Displaying how data is divided across partitions.
+
+Here's the code for this functions:
+```python
+def sdf_generator(num_rows: int, num_partitions: int = None) -> "DataFrame":
+    return (
+        spark.range(num_rows, numPartitions=num_partitions)
+        .withColumn("date", f.current_date())
+        .withColumn("timestamp",f.current_timestamp())
+        .withColumn("idstring", f.col("id").cast("string"))
+        .withColumn("idfirst", f.col("idstring").substr(0,1))
+        .withColumn("idlast", f.col("idstring").substr(-1,1))
+        )
+
+BASE_DIR = "base_dir_loading_lesson/"
+
+results_dict = {}
+results_list = []
+def write_generator(num_rows, num_files):
+    sdf = sdf_generator(num_rows, num_files)
+    path = f"{BASE_DIR}/{num_files}_files_{num_rows}_rows.parquet"
+    sc.setJobDescription(f"Write {num_files} files, {num_rows} rows")
+    sdf.write.format("parquet").mode("overwrite").save(path)
+    sc.setJobDescription("None")
+    print(f"Num partitions written: {sdf.rdd.getNumPartitions()}")
+    print(f"Saved Path: {path}")
+    return path
+
+def set_configs(maxPartitionsMB = 128, openCostInMB = 4, minPartitions = 4):
+    maxPartitionsBytes = math.ceil(maxPartitionsMB*1024*1024)
+    openCostInBytes = math.ceil(openCostInMB*1024*1024)
+    spark.conf.set("spark.sql.files.maxPartitionBytes", str(maxPartitionsBytes)+"b")
+    spark.conf.set("spark.sql.files.openCostInBytes", str(openCostInBytes)+"b")
+    spark.conf.set("spark.sql.files.minPartitionNum", str(minPartitions))
+    print(" ")
+    print("******** SPARK CONFIGURATIONS ********")
+    print(f"MaxPartitionSize {maxPartitionsMB} MB or {maxPartitionsBytes} bytes")
+    print(f"OpenCostInBytes {openCostInMB} MB or {openCostInBytes} bytes")
+    print(f"Min Partitions: {minPartitions}")
+
+    results_dict["maxPartitionsBytes"] = maxPartitionsMB
+```
+## 6.2. What influences the no. of partitions when loading parquet files
+Let's begin by discussing **what influences the partitions** when working with Parquet files in Spark. I've also added some references if you'd like to explore the topic further after this session.
+1. **Number of Cores:**
+    - The **number of available cores** influences the number of partitions when creating data frames or loading data.
+    - This makes sense because **unused cores** would result in less efficient parallelism.
+    - Technically, Spark uses the configuration **`spark.sql.files.minPartitionNum`**. If not set, the default value is `spark.sql.leafNodeDefaultParallelism`. This configuration is effective only when using file-based sources such as Parquet, JSON and ORC. ([Note by stackoverflow](https://stackoverflow.com/questions/45704156/what-is-the-difference-between-spark-sql-shuffle-partitions-and-spark-default-pa)  and [by Spark Documentation](https://spark.apache.org/docs/latest/configuration.html#execution-behavior): "`spark.default.parallelism` is the default number of partitions in `RDD`s returned by transformations like `join`, `reduceByKey`, and `parallelize` when not set explicitly by the user. Note that `spark.default.parallelism` seems to only be working for raw `RDD` and is ignored when working with dataframes.". Just to mention a conceptual linked parameter, let's also describe `spark.sql.shuffle.partitions`, which is 200 by default, and represents the number of partitions to use when shuffling data for joins or aggregations.)
+2. **File Size or Estimated File Size:**
+    - Spark considers the **size of Parquet files** when determining partitioning.
+    - We’ll explore this concept more deeply later, but keep in mind that **Parquet files are split into blocks, row groups, and Snappy compressed files**.
+    - If files become larger, the splitting process follows its internal logic, which can also affect performance and cause **empty partitions**.
+3. **Max Partition Size (`spark.sql.files.maxPartitionBytes`):**
+    - This parameter **limits the maximum partition size**.
+    - The default value is **128 MB**, meaning that if a file exceeds this size, Spark will split it into multiple partitions accordingly.
+4. **Max Cost Per Bytes (`spark.sql.files.openCostInBytes`):**
+    - This parameter **represents the cost of creating a new partition**. It defaults to **4 MB**.
+    - While **less critical for performance**, its effect is notable when working with **smaller files**.
+    - Spark **pads the file size** by adding the value of this parameter, reducing the number of small partitions generated. This results in **fewer, larger partitions**, avoiding idle cores caused by many tiny files.
+
+References:
+- [https://stackoverflow.com/questions/70985235/what-is-opencostinbytes](https://stackoverflow.com/questions/70985235/what-is-opencostinbytes)
+- [https://stackoverflow.com/questions/69034543/number-of-tasks-while-reading-hdfs-in-spark](https://stackoverflow.com/questions/69034543/number-of-tasks-while-reading-hdfs-in-spark)
+- [https://stackoverflow.com/questions/75924368/skewed-partitions-when-setting-spark-sql-files-maxpartitionbytes](https://stackoverflow.com/questions/75924368/skewed-partitions-when-setting-spark-sql-files-maxpartitionbytes)
+- [https://spark.apache.org/docs/latest/sql-performance-tuning.html](https://spark.apache.org/docs/latest/sql-performance-tuning.html)
+- [https://www.linkedin.com/pulse/how-initial-number-partitions-determined-pyspark-sugumar-srinivasan#:~:text=Ideally%20partitions%20will%20be%20created,resource%20will%20get%20utilised%20properly](https://www.linkedin.com/pulse/how-initial-number-partitions-determined-pyspark-sugumar-srinivasan#:~:text=Ideally%20partitions%20will%20be%20created,resource%20will%20get%20utilised%20properly)
+## 6.3. How are the initial number of partitions are determined in PySpark? (by Sugumar Srinivasan on LinkedIn)
+*Important note: Before continuing with Jake Callahan's video I want to copy&paste here an interesting [LinkedIn article](https://www.linkedin.com/pulse/how-initial-number-partitions-determined-pyspark-sugumar-srinivasan/) by Sugumar Srinivasan called "How are the initial number of partitions are determined in PySpark?", which provides some practical hints on this topic. I want to discuss first about this article because the next chapters [6.4. Basic Algorithm](#6.4.%20Basic%20Algorithm) and [6.5. Simple Experiments](#6.5.%20Simple%20Experiments) are based on this article.*
+
+It is super interesting topic in Apache Spark, This can be demonstrated using below 3 categories.
+- Calculating the partitions with **one single large file** (demonstration in this article).
+- Calculating the partitions with **multiple small file**.
+- Calculating the partitions with a **file which is non-splittable**.
+
+But I'm going to explain this using the first category and remaining two will try to cover it in my upcoming article (*PS: Unfortunately these upcoming articles have not yet been made*).
+### Calculating the partitions with one single large file
+Consider we have a single large CSV file in HDFS which is slightly over 1GB (1GB is not that much bigger file that we are going to process in the real world).
+
+Consider we are requesting **2 executors with 2 CPU cores** for processing the data while creating the spark session as mentioned below:
+```python {4,5}
+spark = SparkSession. \
+	builder. \
+	config("spark.dynamicAllocation.enabled", False). \
+	config("spark.exector.cores", 2). \
+	config("spark.executor.instances", 2). \
+	config("spark.executor.memory", "2g"). \
+	config("spark.sql.warehouse.dir", "/user/hive/warehouse"). \
+	enableHiveSupport(). \
+	master("yarn"). \
+	getOrCreate()
+```
+
+Once the spark session gets created, we are good to read the slightly over 1GB CSV file from HDFS to Spark's DataFrame as mentioned below.
+```python
+sample_data_frame = spark.read \
+	.format("csv") \
+	.option("header", True) \
+	.schema(sample_schema) \
+	.load("/user/haoopusr/data/sample_1gb.csv")
+```
+
+Once the DataFrame is created, now we can check how many partitions are created in spark's DataFrame through below line.
+```terminal
+>>> sample_data_frame.rdd.getNumPartitions()
+>>> 9
+```
+
+From the above result, the CSV file has been split into **9 partitions**. Now you might be thinking what is the logic behind this file splitting into 9 partitions, the answer is simple. The given file will be divided into multiple partitions based the property value `maxPartitionBytes`, by default it is set to **134217728b i.e 128MB**. This property can be tweak if we want.
+```terminal
+>>> spark.sql.files.maxPartitionBytes
+>>> '134217728b'
+
+>>> # Byte to MB Conversion
+>>> 134217728/(1024 * 1024)
+128.0
+```
+
+In this case, since the `maxPartitionBytes` is set to 128MB, the CSV file which is slightly over 1GB has been divided into **9 partitions with 8 partitions size of 128MB** and **9th partition with less in size**.
+
+Now we know the logic of the number of partitions created for the file in question, how can we know **if all 9 partitions will be processed in parallel**? To answer this question, this is totally depending upon how much CPU cores we are allocating for the particular job.
+
+In order to know how many partitions can be processed in parallel based the resource configuration that we set, we can execute the below line either in Spark-Shell or Jupyter Notebook:
+```terminal
+>>> spark.sparkContext.defaultParallelism
+4
+```
+
+In this case, **Parallelism** at any given point time can be a **maximum of 4** because you have totally 4 CPU cores.
+
+Consider an another scenario here before moving ahead: let's say we have **slightly more than 1GB CSV file**, but this time we are requesting **6 executors with 2 CPU cores** to process the data:
+```terminal
+>>> spark.sparkContext.defaultParallelism
+12
+```
+In this case, **Parallelism** at any given point time can be a **maximum of 12** because you have totally 12 CPU cores.
+
+Now you might think that with the default partition size of 128 MB you would have 9 partitions. If this were the case, however, we would only have 9 active cores out of 12 available, which means that the remaining **3 would be inactive**. This would not be an efficient use of resources. However, Spark is intelligent and **divide the file in such a way** that all the resources what we have allocated for the job will get utilised wisely and **none of the resources will be sitting in idle**. In this case Spark will try to create **12 partitions of smaller size** and no longer 9 partitions of 128MB.
+
+Based on that, we can formulate the following rule to compute the **initial number of partitions when loading a single large file**:
+> **No of Partitions = min(128MB, (File Size in MB/defaultParallelism))**
+
+**Summary:**
+1. If the executor instances and executor cores both are set to 1, then defaultParallelism would be 2 because by default in our cluster defaultParallelism is set to 2.
+2. Ideally defaultParallelism can be determined by multiplying number of executor instances and number of cpu cores given per instance.**defaultParallelism = (spark.executor.instances * spark.executor.cores)**
+3. To check the default parallelism that we get for the spark job, run the below line in either in spark-shell or jupyter notebook.**spark.sparkContext.defaultParallelism**
+4. Ideally partitions will be created based on `maxPartitionBytes` that we set (by default it is '134217728b' 128MB). In some cases, like we have more resources but we have less partitions, in such cases spark decides the partitions size based on the below logic so that resource will get utilised properly: **No of Partitions = min(128MB, (File Size in MB/defaultParallelism))**
+5. To check number of partitions get created for any given spark data frame, run the below line either in spark-shell or jupyter notebook upon reading the file from HDFS/Data lake(Amazon s3, Azure Data lake Gen2, etc.)**<your_df_name>.rdd.getNumPartitions()**
+## 6.4. Basic Algorithm
+Let's break down how Spark calculates the number of partitions when loading data, using this **basic algorithm**:
+```python
+#Basic algorithm
+def basic_algorithm(file_size):
+    maxPartitionBytes = int(spark.conf.get("spark.sql.files.maxPartitionBytes")[:-1])    
+    minPartitionNum = int(spark.conf.get("spark.sql.files.minPartitionNum"))
+    size_per_core = file_size/minPartitionNum
+    partition_size = min(maxPartitionBytes, size_per_core)
+    no_partitions = file_size/partition_size #round up for no_partitions
+    
+    print(" ")
+    print("******** BASIC ALGORITHM TO ESTIMATE NO PARTITIONS ********")
+    print(f"File Size: {round(file_size/1024/1024, 1)} MB or {file_size} bytes")
+    print(f"Size Per Core: {round(size_per_core/1024/1024, 1)} MB or {size_per_core} bytes")
+    print(f"Partionsize: {round(partition_size/1024/1024, 1)} MB or {partition_size} bytes")
+    print(f"EstimatedPartitions: {math.ceil(no_partitions)}, unrounded: {no_partitions}")
+```
+
+Let's describe all the variables inside this function:
+- `file_size`: The total size of the data file being loaded into Spark.
+- `maxPartitionBytes`: Sets the **maximum size per partition**, defaulting to **128 MB**. It is represented by `spark.sql.files.maxPartitionBytes`.
+* `minPartitionNum`: Defines the **minimum number of partitions** to be created, defaulting to the number of **available cores**, ensuring proper parallelism. It is represented by `spark.sql.files.minPartitionNum`.
+- `partition_size`: Represents the partition size and it's computed choosing from the minimum value from `size_per_core` (= `file_size / minPartitionNum`) and `maxPartitionBytes`, as we saw in the previous chapter [Calculating the partitions with one single large file](#Calculating%20the%20partitions%20with%20one%20single%20large%20file).
+* `no_partitions`calculated as `file_size / partition_size` to ensure that the data is divided into an optimal number of partitions.
+### 6.4.1. Change `file_size`
+Suppose we have:
+- A 64 MB file
+- A default `maxPartitionBytes` = 128 MB
+- A `minPartitionNum` = 4.
+```terminal
+>>> file_size = 64
+>>> set_configs(maxPartitionsMB=128, openCostInMB=4, minPartitions=4)
+>>> basic_algorithm(file_size*1024*1024)
+
+******** SPARK CONFIGURATIONS ********
+MaxPartitionSize 128 MB or 134217728 bytes
+OpenCostInBytes 4 MB or 4194304 bytes
+Min Partitions: 4
+ 
+******** BASIC ALGORITHM TO ESTIMATE NO PARTITIONS ********
+File Size: 64.0 MB or 67108864 bytes
+Size Per Core: 16.0 MB or 16777216.0 bytes
+Partionsize: 16.0 MB or 16777216.0 bytes
+EstimatedPartitions: 4, unrounded: 4.0
+```
+
+To get these results, the algorithm proceeded as follows:
+1. **Size Per Core**: `size_per_core = file_size / minPartitionNum` = `64 MB / 4 cores = 16 MB per core`.
+2. **Partition Size**: `partition_size = min(maxPartitionBytes, size_per_core)` = `min(128 MB, 16 MB) = 16 MB per partition`.
+3. **Number of Partitions**: `no_partitions = file_size / partition_size` = `64 MB / 16 MB = 4 partitions`.
+
+Here, Spark chooses a partition size of **16 MB**, as it ensures parallelism by using all cores.
+
+Let’s consider a **100 MB file**:
+```terminal
+>>> file_size = 100
+>>> set_configs(maxPartitionsMB=128, openCostInMB=4, minPartitions=4)
+>>> basic_algorithm(file_size*1024*1024)
+
+******** SPARK CONFIGURATIONS ********
+MaxPartitionSize 128 MB or 134217728 bytes
+OpenCostInBytes 4 MB or 4194304 bytes
+Min Partitions: 4
+ 
+******** BASIC ALGORITHM TO ESTIMATE NO PARTITIONS ********
+File Size: 100.0 MB or 104857600 bytes
+Size Per Core: 25.0 MB or 26214400.0 bytes
+Partion size: 25.0 MB or 26214400.0 bytes
+EstimatedPartitions: 4, unrounded: 4.0
+```
+1. **Size Per Core** `size_per_core = 100 MB / 4 cores = 25 MB per core`.
+2. **Partition Size**: `partition_size = min(128 MB, 25 MB) = 25 MB per partition`.
+3. **Number of Partitions**: `no_partitions = 100 MB / 25 MB = 4 partitions`.
+
+Here, Spark chooses a partition size of **25 MB**, as it ensures parallelism by using all cores.
+
+**Insights from the Algorithm**:
+- Spark optimizes the **partition size** to balance between:
+    - **Efficient use of available cores** (avoiding idle cores),
+    - **Avoiding oversized partitions** (maintaining the max partition bytes limit).
+- By default, the **max partition size (128 MB)** ensures that even large files are divided into smaller, manageable chunks.
+- **Minimum partitions** (based on cores) guarantee good parallelism for processing.
+
+Let’s consider a **200 MB file**:
+```terminal
+>>> file_size = 200
+>>> set_configs(maxPartitionsMB=128, openCostInMB=4, minPartitions=4)
+>>> basic_algorithm(file_size*1024*1024)
+
+******** SPARK CONFIGURATIONS ********
+MaxPartitionSize 128 MB or 134217728 bytes
+OpenCostInBytes 4 MB or 4194304 bytes
+Min Partitions: 4
+ 
+******** BASIC ALGORITHM TO ESTIMATE NO PARTITIONS ********
+File Size: 200.0 MB or 209715200 bytes
+Size Per Core: 50.0 MB or 52428800.0 bytes
+Partion size: 50.0 MB or 52428800.0 bytes
+EstimatedPartitions: 4, unrounded: 4.0
+```
+
+Here, Spark chooses a partition size of **50 MB**.
+### 6.4.2. Change `maxPartitionBytes`
+Suppose we have:
+- A 200 MB file
+- A default `maxPartitionBytes` = 45 MB
+- A `minPartitionNum` = 4.
+```
+>>> file_size = 200
+>>> set_configs(maxPartitionsMB=45, openCostInMB=4, minPartitions=4)
+>>> basic_algorithm(file_size*1024*1024)
+
+******** SPARK CONFIGURATIONS ********
+MaxPartitionSize 45 MB or 47185920 bytes
+OpenCostInBytes 4 MB or 4194304 bytes
+Min Partitions: 4
+ 
+******** BASIC ALGORITHM TO ESTIMATE NO PARTITIONS ********
+File Size: 200.0 MB or 209715200 bytes
+Size Per Core: 50.0 MB or 52428800.0 bytes
+Partion size: 45.0 MB or 47185920 bytes
+EstimatedPartitions: 5, unrounded: 4.444444444444445
+```
+
+**Impact of Non-Splittable Snappy Files** (*TODO: I don't know if it's correct and it's not so clear to me*)
+- **Snappy Parquet Compression**:
+    - Snappy-compressed Parquet files are **not splittable**.
+    - If a Snappy file exceeds the calculated partition size, it **cannot be further split** during partitioning.
+- **Effect**:
+    - For datasets with only a few files (e.g., 4 files for 200 MB):
+        - Partitioning into smaller chunks (e.g., 45 MB) **may not work effectively**.
+    - For datasets with many files (e.g., 20 or 30 files):
+        - Partitioning into smaller sizes becomes more feasible as each file contributes smaller data chunks.
+
+Now let's increase `maxPartitionBytes` to 200.000 MB:
+```terminal
+>>> file_size = 200
+>>> set_configs(maxPartitionsMB=200000, openCostInMB=4, minPartitions=4)
+>>> basic_algorithm(file_size*1024*1024)
+
+******** SPARK CONFIGURATIONS ********
+MaxPartitionSize 200000 MB or 209715200000 bytes
+OpenCostInBytes 4 MB or 4194304 bytes
+Min Partitions: 4
+ 
+******** BASIC ALGORITHM TO ESTIMATE NO PARTITIONS ********
+File Size: 200.0 MB or 209715200 bytes
+Size Per Core: 50.0 MB or 52428800.0 bytes
+Partion size: 50.0 MB or 52428800.0 bytes
+EstimatedPartitions: 4, unrounded: 4.0
+```
+
+**Observation**: Even though the `maxPartitionBytes` is set higher, the partitioning logic defaults to the size per core to ensure that all available cores are utilized.
+
+**Safety Mechanism for Partitioning** (*TODO: I don't know if it's correct and it's not so clear to me*)
+- If the `maxPartitionBytes` value is set too low, Spark ensures that:
+    - The **minimum number of partitions** is respected (based on available cores).
+    - Partition sizes are adjusted to avoid creating **excessively small partitions** that would lead to overhead or underutilized resources.
+- **Example**:
+    - For **200 MB file size**, setting `maxPartitionBytes = 4 MB`:
+        - Instead of generating **50 partitions** (which could cause inefficiency), Spark would:
+            - Default to **4 partitions** (one per core),
+            - Assign **50 MB per partition**.
+## 6.5. Simple Experiments
+*TODO: to finish!*
