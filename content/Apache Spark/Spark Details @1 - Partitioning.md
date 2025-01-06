@@ -1,6 +1,6 @@
 ---
 date: 2024-08-12
-modified: 2024-12-28T14:23:52+01:00
+modified: 2024-12-30T17:22:35+01:00
 ---
 These notes about **Partitioning** will be "notebook-style" and only important and useful operations will be shown in this article (hence, very probably, no such operations will be shown: DataFrame creation, session state creation, etc.). For the complete code, refers to these notebooks I uploaded on a specific repository on [this link](https://github.com/simdangelo/simonedangelo-blog/tree/v4/content/Apache%20Spark/partitioning_notebooks).
 # 0. Resources
