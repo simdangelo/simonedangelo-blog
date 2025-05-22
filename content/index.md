@@ -1,7 +1,7 @@
 ---
 title: Welcome to My Garden
 date: 2024-06-09
-modified: 2025-01-09T18:25:41+01:00
+modified: 2025-05-22T22:18:14+02:00
 ---
 
 I'm Simone, an **aspiring Software Engineer**. This website is my personal space, where I'll be documenting my journey in the field of software engineering. 
@@ -27,6 +27,6 @@ I have organized the content of this Garden into various topics and sections for
 	* [Understanding Python (by Jake Callahan)](Python/Understanding%20Python%20(by%20Jake%20Callahan)/index.md): a playlist on basic-intermediate topics that I found on YouTube by chance. Jake is very clear in its explanation.
 * [Technical Books](Technical%20Books/index.md): I post notes I am taking from books I am reading. Note that these books aren't meant to be read entirely. I'll only take notes on the chapters that interest me the most, and especially those that are relevant to my work; so, don't expect to find notes on all the chapters. At the time of writing, this section includes the following books:
 	* [Fluent Python (by Luciano Ramalho)](Technical%20Books/Fluent%20Python/index.md): This book is an intermediate-advanced level Python book.
-	* [Head First Design Pattern (by Eric Freeman & Elisabeth Robson)](Technical%20Books/Head%20First%20Design%20Pattern/index.md): This book is an highly recommend book for Design Pattern. When the books need clarification or integration, I'll use videos from Christopher Okhravi's YouTube channel, which has a great playlist about design patterns: [Design Pattern Playlist by Christopher Okhravi](https://www.youtube.com/playlist?list=PLrhzvIcii6GNjpARdnO4ueTUAVR9eMBpc).
+	* [Head First Design Pattern (by Eric Freeman & Elisabeth Robson)](Technical%20Books/Head%20First%20Design%20Pattern/index.md): This book is an highly recommended book for Design Patterns. When the books need clarification or integration, I'll use videos from Christopher Okhravi's YouTube channel, which has a great playlist about design patterns: [Design Pattern Playlist by Christopher Okhravi](https://www.youtube.com/playlist?list=PLrhzvIcii6GNjpARdnO4ueTUAVR9eMBpc).
 	* [Python Object-Oriented Programming (by Steven F.Lott & Dusty Phillips)](Technical%20Books/Python%20Object-Oriented%20Programming/index.md): This book dives into the various aspects of OOP in Python.
 	* [Deciphering Data Architecture (by James Serra)](Technical%20Books/Deciphering%20Data%20Architectures/index.md): this book focuses more on certain aspects of data engineering, especially explaining data architectures like Databases, Data Warehouses, Data Lakes, and Data Lakehouses. I hope it helps me better understand these concepts, as I only have a partial grasp of them.
