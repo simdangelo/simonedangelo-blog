@@ -2,7 +2,7 @@
 date: 2024-03-16
 tags:
   - docker
-modified: 2024-06-18T21:14:10+02:00
+modified: 2025-06-22T11:49:28+02:00
 ---
 
 In this tutorial, I will share the insights and tips I gathered from a video on YouTube by "**TechWorld with Nana**" channel (link here: [video tutorial here]( https://www.youtube.com/watch?v=3c-iBn73dDE&ab_channel=TechWorldwithNana)). These notes have been organized to follow the video step by step.
