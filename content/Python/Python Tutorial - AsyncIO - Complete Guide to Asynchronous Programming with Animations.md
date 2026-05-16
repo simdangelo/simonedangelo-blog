@@ -1,23 +1,23 @@
 ---
-modified: 2026-04-05T22:38:54+02:00
+modified: 2026-05-09T15:36:19+02:00
 ---
 
 *Content summarized from [YouTube video](https://www.youtube.com/watch?v=oAkLSJNr5zY&t=5502s) by Corey Schafer.*
 
 ---
 
-Async/IO is Python's built-in library for writing concurrent code using the `async`/`await` syntax. This guide uses the latest version of Python and focuses on modern approaches, as Async/IO has evolved considerably over the years with different methods for running the event loop, scheduling tasks, and executing concurrent operations.
+**AsyncIO** is Python's built-in library for writing concurrent code using the `async`/`await` syntax. This guide uses the latest version of Python and focuses on modern approaches, as Async/IO has evolved considerably over the years with different methods for running the event loop, scheduling tasks, and executing concurrent operations.
 
 # What is Concurrency?
 With **synchronous code** execution, one operation happens after another. This resembles a Subway restaurant where an employee makes your entire sandwich from start to finish before moving to the next customer. With **concurrent code**, the model resembles a McDonald's where someone takes your order and moves to the next customer while your food is prepared in the background.
 
 Asynchronous execution **doesn't automatically mean faster execution**. It means you can perform other useful work instead of sitting idle while waiting for external operations like network requests, database queries, and similar IO operations. This is why Async/IO excels at **IO-bound tasks**—anytime your program waits for something external.
 
-Async/IO is single-threaded and runs on a single process. It uses cooperative multitasking where tasks voluntarily yield control. For CPU-bound tasks requiring heavy computation, you would use processes instead.
+Async/IO is **single-threaded** and runs on a **single process**. It uses **cooperative multitasking** where tasks voluntarily yield control. For CPU-bound tasks requiring heavy computation, you would use processes instead.
 
 # Core Terminology and Basic Concepts
 ## Coroutines and Coroutine Functions
-A **coroutine** function is defined using the `async def` keywords. When you call a coroutine function, it doesn't immediately execute the function body—it returns a coroutine object. Consider this example:
+A **coroutine function** is defined using the `async def` keywords. When you call a coroutine function, it doesn't immediately execute the function body—it returns a coroutine object. Consider this example:
 ```python
 async def async_function(delay):
     await asyncio.sleep(delay)
@@ -50,7 +50,7 @@ Python's Async/IO defines three main types of awaitable objects.
 ### 1. Coroutines
 **Coroutines** are created when you call an async function.
 
-**Coroutines are objects representing computations that can be paused and resumed"**. There are actually two distinct concepts: the **coroutine function** (defined with `async def`) and the **coroutine object** (the awaitable returned when calling that function):
+**Coroutines are objects representing computations that can be paused and resumed**. There are actually two distinct concepts: the **coroutine function** (defined with `async def`) and the **coroutine object** (the awaitable returned when calling that function):
 ```python
 import asyncio
 
@@ -242,13 +242,17 @@ Task 2 fully complete
 Finished in 3.00 seconds
 ```
 
-Total time: 3 seconds. **No concurrency benefit**. At any given moment, only one task is scheduled and running on the event loop. The second task doesn't even get scheduled until the first is completely finished. Let's see what it means.
+Total time: 3 seconds. **No concurrency benefit**.
+
+> **At any given moment, only one task is scheduled and running on the event loop**.
+
+The second task doesn't even get scheduled until the first is completely finished. Let's see what it means.
 
 When `asyncio.run(main())` executes, it **creates the event loop and runs the `main` coroutine**:
 ![[Pasted image 20260330234028.png]]
 
 Inside the `main` coroutine:
-1. `task1 = fetch_data(1)` **creates a coroutine object**—**it does NOT schedule anything on the event loop**. It just returns a coroutine object.
+1. `task1 = fetch_data(1)` **creates a coroutine object**—**it does NOT schedule anything on the event loop**; **it just returns a coroutine object**.
 2. `task2 = fetch_data(2)` creates another coroutine object. Still nothing scheduled.
 3. `result1 = await task1` is where things happen. This line both **schedules the coroutine on the event loop** **AND runs it to completion** at the same time.
 
